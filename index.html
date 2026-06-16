@@ -560,17 +560,25 @@ function buildDayCol(date,evs){
     col.appendChild(row);
   }
 
-  // Regular events for this day
+  // Regular (single-day) events
   const dayEvs=(evs[key]||[]).filter(ev=>!ev.multiday);
-  // Multi-day events that start on this day (shown as full-height continuation in time grid)
-  const mdEvs=(evs[key]||[]).filter(ev=>ev.multiday);
-  // Multi-day continuations from other days
-  Object.entries(evs).forEach(([k,dayE])=>{
-    if(k===key)return;
+
+  // Collect multi-day events visible on this date, with correct role
+  // role: 'start' | 'middle' | 'end'
+  const mdEvs=[];
+  Object.entries(evs).forEach(([startKey,dayE])=>{
     dayE.forEach(ev=>{
       if(!ev.multiday||!ev.endDate)return;
-      const start=dateFromStr(k);const end=dateFromStr(ev.endDate);
-      if(date>start&&date<=end)mdEvs.push({...ev,_originKey:k,_isCont:true});
+      const endKey=ev.endDate;
+      // Event spans [startKey 00:00+ev.start .. endKey ev.end]
+      // Is this date within the span?
+      if(key<startKey||key>endKey)return;
+      let role;
+      if(key===startKey&&key===endKey)role='single'; // same day start+end (shouldn't happen for multiday but safe)
+      else if(key===startKey)role='start';
+      else if(key===endKey)role='end';
+      else role='middle';
+      mdEvs.push({ev,originKey:startKey,role});
     });
   });
 
@@ -599,22 +607,29 @@ function buildDayCol(date,evs){
     col.appendChild(el);
   });
 
-  // Place multi-day events as tall banners (full height from start/0 to end/24)
-  mdEvs.forEach((ev,idx)=>{
-    const originKey=ev._originKey||key;
-    const isCont=ev._isCont||false;
-    const sm=isCont?0:t2m(ev.start);
-    const isLastDay=ev.endDate===key;
-    const em=isLastDay?t2m(ev.end):24*60;
-    const dur=Math.max(em-sm,30);
+  // Place multi-day events
+  // start day: from ev.start to 24:00
+  // middle day: from 00:00 to 24:00
+  // end day:   from 00:00 to ev.end
+  mdEvs.forEach(({ev,originKey,role},idx)=>{
+    const sm = role==='start' ? t2m(ev.start) : 0;
+    const em = role==='end'   ? t2m(ev.end)   : 24*60;
+    const dur = Math.max(em-sm, 30);
     const c=C[ev.color||0];
     const el=document.createElement('button');el.className='event';
     const rightOff=4+idx*2;
-    el.style.cssText=`top:${sm*PX}px;height:${dur*PX}px;left:3px;right:${rightOff}px;background:${c.bg};color:${c.text};border-left-color:${c.border};opacity:.9`;
+    el.style.cssText=`top:${sm*PX}px;height:${dur*PX}px;left:3px;right:${rightOff}px;`+
+      `background:${c.bg};color:${c.text};border-left-color:${c.border};opacity:.92`;
     const tags=(ev.tags||[]).join(' ');
-    const label=isCont?'↳ продолжение':(isLastDay?'→ до '+ev.end:'→ дальше');
-    el.innerHTML=`<div class="ev-title">${escHtml(ev.name||'—')}</div><div class="ev-meta">${tags||''}</div><div class="ev-multiday-tag">${label}</div>`;
-    el.addEventListener('click',e=>{e.stopPropagation();pendingDate=dateFromStr(originKey);openModal(ev.id,null,null,originKey);});
+    const roleLabel = role==='start' ? ('→ до '+ev.endDate+' '+ev.end)
+                    : role==='end'   ? ('↳ до '+ev.end)
+                    : '↳ продолжение';
+    el.innerHTML=`<div class="ev-title">${escHtml(ev.name||'—')}</div>`+
+      `<div class="ev-meta">${tags||''}</div>`+
+      `<div class="ev-multiday-tag">${roleLabel}</div>`;
+    el.addEventListener('click',e=>{
+      e.stopPropagation();pendingDate=dateFromStr(originKey);openModal(ev.id,null,null,originKey);
+    });
     col.appendChild(el);
   });
 
@@ -873,4 +888,3 @@ setInterval(()=>{if(view==='day')renderDayView();},60000);
 </script>
 </body>
 </html>
-
