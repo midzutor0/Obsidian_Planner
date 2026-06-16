@@ -334,7 +334,7 @@ function load(){try{return JSON.parse(localStorage.getItem(STORE_KEY)||'{}')}cat
 function save(e){localStorage.setItem(STORE_KEY,JSON.stringify(e))}
 
 // Helpers
-function dk(d){return d.toISOString().slice(0,10)}
+function dk(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 function t2m(t){if(!t)return 0;const[h,m]=t.split(':').map(Number);return h*60+m}
 function m2t(m){return String(~~(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}
 function addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r}
