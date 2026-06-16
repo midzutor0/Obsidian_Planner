@@ -224,9 +224,18 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
     </div>
 
     <!-- Task list -->
-    <div class="sidebar-section" style="flex:1;overflow-y:auto">
-      <div class="section-label" id="tasklist-lbl">Задачи сегодня</div>
-      <div class="task-list" id="task-list"></div>
+    <div class="sidebar-section" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:0">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;flex-shrink:0">
+        <div class="section-label" style="margin-bottom:0">Задачи</div>
+        <div style="display:flex;gap:2px">
+          <button class="btn active" id="tl-day" style="padding:2px 7px;font-size:10px" onclick="setTaskScope('day')">День</button>
+          <button class="btn" id="tl-week" style="padding:2px 7px;font-size:10px" onclick="setTaskScope('week')">Нед.</button>
+          <button class="btn" id="tl-all" style="padding:2px 7px;font-size:10px" onclick="setTaskScope('all')">Все</button>
+        </div>
+      </div>
+      <input type="text" id="task-search" placeholder="Поиск..." oninput="renderTaskList()"
+        style="flex-shrink:0;width:100%;padding:5px 8px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:11px;font-family:inherit"/>
+      <div class="task-list" id="task-list" style="overflow-y:auto;flex:1"></div>
     </div>
 
     <!-- Tags -->
@@ -318,7 +327,7 @@ const STORE_KEY='planner_obsidian_v2';
 let selDate=new Date(); selDate.setHours(0,0,0,0);
 let miniMonth=new Date(selDate);
 let view='day';
-let editId=null, editDateKey=null, selColor=0, pendingDate=null;
+let editId=null, editDateKey=null, selColor=0, pendingDate=null, taskScope='day';
 
 // Storage
 function load(){try{return JSON.parse(localStorage.getItem(STORE_KEY)||'{}')}catch{return{}}}
@@ -363,7 +372,14 @@ function navNext(){selDate=addDays(selDate,view==='day'?1:7);if(view==='week')se
 function goToday(){selDate=new Date();selDate.setHours(0,0,0,0);miniMonth=new Date(selDate);render()}
 function miniPrev(){miniMonth=new Date(miniMonth);miniMonth.setMonth(miniMonth.getMonth()-1);renderMini()}
 function miniNext(){miniMonth=new Date(miniMonth);miniMonth.setMonth(miniMonth.getMonth()+1);renderMini()}
-function setView(v){view=v;document.getElementById('vb-day').classList.toggle('active',v==='day');document.getElementById('vb-week').classList.toggle('active',v==='week');render()}
+function setView(v){
+  view=v;
+  document.getElementById('vb-day').classList.toggle('active',v==='day');
+  document.getElementById('vb-week').classList.toggle('active',v==='week');
+  // sync task scope tab if not on 'all'
+  if(taskScope!=='all')setTaskScope(v==='day'?'day':'week');
+  else render();
+}
 
 // Mini calendar
 function renderMini(){
@@ -422,65 +438,105 @@ function renderStats(){
   });
 }
 
+// Task scope switcher
+function setTaskScope(scope){
+  taskScope=scope;
+  ['day','week','all'].forEach(s=>{
+    document.getElementById('tl-'+s).classList.toggle('active',s===scope);
+  });
+  renderTaskList();
+}
+
 // Task list in sidebar
 function renderTaskList(){
   const evs=load();
   const C=getColors();
   const list=document.getElementById('task-list');
   list.innerHTML='';
+  const q=(document.getElementById('task-search').value||'').toLowerCase().trim();
 
+  // Collect entries: {ev, dateKey}
+  // Each entry is a unique event (multi-day counted once, stored at startKey)
   let entries=[];
-  if(view==='day'){
-    document.getElementById('tasklist-lbl').textContent='Задачи дня';
+  const seen=new Set();
+
+  function addEntry(ev,dateKey){
+    const uid=dateKey+'|'+ev.id;
+    if(seen.has(uid))return;
+    seen.add(uid);
+    entries.push({ev,dateKey});
+  }
+
+  if(taskScope==='day'){
     const dateKey=dk(selDate);
-    (evs[dateKey]||[]).forEach(ev=>entries.push({ev,dateKey,isContinuation:false}));
-    // Add multi-day tasks that span this day
+    (evs[dateKey]||[]).forEach(ev=>addEntry(ev,dateKey));
+    // multi-day spanning today
     Object.entries(evs).forEach(([key,dayEvs])=>{
       if(key===dateKey)return;
       dayEvs.forEach(ev=>{
         if(!ev.multiday||!ev.endDate)return;
-        const start=dateFromStr(key);const end=dateFromStr(ev.endDate);const d=selDate;
-        if(d>start&&d<=end)entries.push({ev,dateKey:key,isContinuation:true});
+        if(dateKey>key&&dateKey<=ev.endDate)addEntry(ev,key);
       });
     });
-  } else {
-    document.getElementById('tasklist-lbl').textContent='Задачи недели';
-    const ws=weekStart(selDate);
-    const seen=new Set();
+  } else if(taskScope==='week'){
+    const ws=weekStart(selDate);const we=addDays(ws,6);
     for(let i=0;i<7;i++){
-      const dateKey=dk(addDays(ws,i));
-      (evs[dateKey]||[]).forEach(ev=>{
-        const uid=dateKey+'|'+ev.id;
-        if(!seen.has(uid)){seen.add(uid);entries.push({ev,dateKey,isContinuation:false});}
-      });
+      const key=dk(addDays(ws,i));
+      (evs[key]||[]).forEach(ev=>addEntry(ev,key));
     }
-    // Multi-day tasks overlapping the week
     Object.entries(evs).forEach(([key,dayEvs])=>{
       dayEvs.forEach(ev=>{
         if(!ev.multiday||!ev.endDate)return;
-        const start=dateFromStr(key);const end=dateFromStr(ev.endDate);
-        const ws2=weekStart(selDate);const we=addDays(ws2,6);
-        if(start<=we&&end>=ws2){
-          const uid=key+'|'+ev.id;
-          if(!entries.find(e=>e.dateKey===key&&e.ev.id===ev.id))
-            entries.push({ev,dateKey:key,isContinuation:false});
-        }
+        const s=dateFromStr(key),e=dateFromStr(ev.endDate);
+        if(s<=we&&e>=ws)addEntry(ev,key);
       });
+    });
+  } else {
+    // All tasks, sorted by date
+    Object.entries(evs).sort(([a],[b])=>a.localeCompare(b)).forEach(([key,dayEvs])=>{
+      dayEvs.forEach(ev=>addEntry(ev,key));
     });
   }
 
-  entries.sort((a,b)=>t2m(a.ev.start)-t2m(b.ev.start));
-
-  if(!entries.length){
-    const el=document.createElement('div');el.className='no-tasks';el.textContent='Нет задач';list.appendChild(el);return;
+  // Filter by search query
+  if(q){
+    entries=entries.filter(({ev})=>{
+      const haystack=(ev.name||'').toLowerCase()+(ev.note||'').toLowerCase()+(ev.tags||[]).join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
   }
 
-  entries.forEach(({ev,dateKey,isContinuation})=>{
+  if(!entries.length){
+    const el=document.createElement('div');el.className='no-tasks';
+    el.textContent=q?'Ничего не найдено':'Нет задач';
+    list.appendChild(el);return;
+  }
+
+  // Sort: by date then by start time
+  entries.sort((a,b)=>a.dateKey.localeCompare(b.dateKey)||t2m(a.ev.start)-t2m(b.ev.start));
+
+  // Group by date in 'all' mode
+  let lastDateGroup='';
+
+  entries.forEach(({ev,dateKey})=>{
+    // Date group header (only in 'all' and 'week' modes)
+    if((taskScope==='all'||taskScope==='week')&&dateKey!==lastDateGroup){
+      lastDateGroup=dateKey;
+      const d=dateFromStr(dateKey);
+      const today=new Date();today.setHours(0,0,0,0);
+      const isToday=d.getTime()===today.getTime();
+      const grp=document.createElement('div');
+      grp.style.cssText='font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;padding:6px 4px 3px;margin-top:4px';
+      const label=isToday?'Сегодня':d.getDate()+' '+MRU[d.getMonth()].slice(0,3)+' '+d.getFullYear();
+      grp.textContent=label;
+      list.appendChild(grp);
+    }
+
     const c=C[ev.color||0];
     const item=document.createElement('div');
     item.className='task-item'+(ev.multiday?' multiday':'');
     item.style.borderLeftColor=c.border;
-    
+
     // Checkbox
     const chk=document.createElement('div');
     chk.className='task-check'+(ev.done?' done':'');
@@ -500,22 +556,23 @@ function renderTaskList(){
 
     const time=document.createElement('div');time.className='task-time';
     if(ev.multiday&&ev.endDate){
-      time.textContent=dateKey+' '+ev.start+' → '+ev.endDate+' '+ev.end;
+      time.textContent=dateKey.slice(5)+' '+ev.start+' → '+ev.endDate.slice(5)+' '+ev.end;
     } else {
-      const prefix=view==='week'?dateKey.slice(5)+' ':'';
-      time.textContent=prefix+ev.start+'–'+ev.end;
+      const prefix=(taskScope==='all')?'':(taskScope==='week'?'':'');
+      time.textContent=ev.start+'–'+ev.end;
     }
 
-    body.appendChild(name);
-    body.appendChild(time);
+    body.appendChild(name);body.appendChild(time);
     if(ev.tags&&ev.tags.length){
       const tg=document.createElement('div');tg.className='task-tags';tg.textContent=ev.tags.join(' ');body.appendChild(tg);
     }
 
     item.appendChild(chk);item.appendChild(body);
-
     item.addEventListener('click',()=>{
+      // Navigate to that date and open modal
+      selDate=dateFromStr(dateKey);
       pendingDate=dateFromStr(dateKey);
+      render();
       openModal(ev.id,null,null,dateKey);
     });
     list.appendChild(item);
